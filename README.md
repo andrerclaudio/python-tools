@@ -8,3 +8,7 @@ This repository is composed of:
 
 * `decorators`: A folder with some examples of useful 
 Python **[decorator](https://python101.pythonlibrary.org/chapter25_decorators.html)**.
+
+
+    * *dec-timer.py*: Used to measured the ammount of time to execute
+    a giviing function.
