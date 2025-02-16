@@ -6,7 +6,9 @@ import sys
 import threading
 import time
 from functools import partial
-from typing import Dict, List
+from typing import Dict
+import pandas as pd
+import uuid
 
 # Initialize logger configuration
 logging.basicConfig(
@@ -15,47 +17,43 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-THREADS_QTY: int = 4
-THREADS: List[int] = [i for i in range(0, THREADS_QTY)]
+THREADS_QTY: int = 99
 STATE_CHANGE_DELAY: float = 0.5
 
 # Value definitions
-MAKE_IT_TRUE = True
-MAKE_IT_OFF = False
-
-
-"""
-Class managing thread execution and synchronization control flags.
-
-This class provides flags for controlling application behavior, such as whether to keep running,
-wait between operations, and tracking operational counters. It facilitates monitoring system usage through a counter mechanism.
-
-Attributes:
-    keep_running (bool): Flag indicating if the application should continue executing.
-    wait (bool): Flag determining operation timing intervals.
-    __WORK_COUNTER (Dict[str, int]): Dictionary tracking counts of various operations.
-
-Methods:
-    add_counter(name: str) -> None:
-        Initializes or increments an existing counter for a specified operation. Starts at 0 when first called.
-        The same value can be accessed and updated elsewhere in the system with minimal overhead.
-
-    get_counter(name: str) -> int:
-        Retrieves the current count of a specific operation. Useful for monitoring usage metrics across the system.
-
-    increment_counter(name: str) -> None:
-        Increases the count associated with an operation by 1, providing accurate tracking of activity levels.
-
-    min_counter() -> str:
-        Determines which operation has been performed the least number of times according to the counter values.
-        Returns the first occurring operation in case of a tie.
-
-    get_all_values() -> Dict[str, int]:
-        Returns a dictionary containing all tracked operation counters for program-wide analysis or reporting.
-"""
+ON = True
+OFF = False
 
 
 class AppControlFlags:
+    """
+    This class provides flags for controlling application behavior, such as whether to keep running,
+    wait between operations, and tracking operational counters. It facilitates monitoring system usage through a counter mechanism.
+
+    Attributes:
+        keep_running (bool): Flag indicating if the application should continue executing.
+        wait (bool): Flag determining operation timing intervals.
+        __WORK_COUNTER (Dict[str, int]): Dictionary tracking counts of various operations.
+
+    Methods:
+        add_counter(name: str) -> None:
+            Initializes or increments an existing counter for a specified operation. Starts at 0 when first called.
+            The same value can be accessed and updated elsewhere in the system with minimal overhead.
+
+        get_counter(name: str) -> int:
+            Retrieves the current count of a specific operation. Useful for monitoring usage metrics across the system.
+
+        increment_counter(name: str) -> None:
+            Increases the count associated with an operation by 1, providing accurate tracking of activity levels.
+
+        min_counter() -> str:
+            Determines which operation has been performed the least number of times according to the counter values.
+            Returns the first occurring operation in case of a tie.
+
+        get_all_values() -> Dict[str, int]:
+            Returns a dictionary containing all tracked operation counters for program-wide analysis or reporting.
+    """
+
     def __init__(self) -> None:
         self.keep_running = True
         self.wait = True
@@ -134,21 +132,17 @@ class AppControlFlags:
 
 class Job(threading.Thread):
     """
-    Manages a GPIO output line in a separate thread, toggling its state asynchronously.
+    Executes recurring tasks in a separate thread with synchronized control and prioritization.
 
-    This class allows independent control of GPIO lines, with synchronized
-    start/stop operations and LED state toggling.
+    Provides coordinated task execution with thread-safe state management,
+    priority-based scheduling, and graceful shutdown capabilities.
 
     Attributes:
-        control (AppControlFlags): Shared control flags for application state.
-        lock (threading.Lock): Synchronization lock for thread-safe operations.
-        condition (threading.Condition): Synchronization condition for wait/notify operations.
-        gpio_controller (gpiod.LineRequest): GPIO controller for managing the specified line.
-        output_number (int): GPIO line number assigned to this thread.
-        led_state (Value): Current state of the LED (ON or OFF).
-
-    Methods:
-        run() -> None: Main thread loop for toggling the GPIO output.
+        control (AppControlFlags): Shared application control flags for system state.
+        lock (threading.Lock): Coordination lock for thread-safe operations.
+        condition (threading.Condition): Synchronization primitive for wait/notify.
+        active (bool): Indication about what is the Thread state.Defaults to OFF.
+        thread_name (str): Unique identifier for this job instance.
     """
 
     def __init__(
@@ -156,29 +150,27 @@ class Job(threading.Thread):
         control: AppControlFlags,
         lock: threading.Lock,
         condition: threading.Condition,
-        output_number: int,
+        thread_name: str,
     ) -> None:
         """
-        Initialize a GpioOutput thread.
+        Initialize a managed job thread.
 
         Args:
-            control (AppControlFlags): Application-wide control flags.
-            lock (threading.Lock): Synchronization lock.
-            condition (threading.Condition): Thread condition for wait/notify.
-            gpio_controller (gpiod.LineRequest): GPIO line controller.
-            output_number (int): GPIO line number.
+            control: Shared application state controller
+            lock: Mutual exclusion lock for resource protection
+            condition: Coordination primitive for thread scheduling
+            active: Hold the thread state (ON or OFF)
+            thread_name: Unique identifier for this job
         """
         threading.Thread.__init__(self)
-        self.name = f"THR-{output_number}"  # Thread name based on output number
+        self.name = thread_name
 
         self._control: AppControlFlags = control
         self._lock: threading.Lock = lock
         self._condition: threading.Condition = condition
-        self._led_state: bool = MAKE_IT_OFF  # Initial LED state is OFF
-
-        # Initialize counter for this thread
+        self._active: bool = OFF  # Initial activity state
         self._control.add_counter(name=self.name)
-        self.start()  # Automatically start the thread
+        self.start()
 
     def __app_is_running(self) -> bool:
         """
@@ -234,33 +226,35 @@ class Job(threading.Thread):
 
     def run(self) -> None:
         """
-        Main thread loop for toggling the GPIO output.
+        Main execution loop managing task lifecycle and coordination.
 
-        Continuously toggles the LED state between ON and OFF at regular intervals
-        until the thread is stopped.
+        Implements priority-based task scheduling with configurable delays
+        and system state monitoring for graceful termination.
         """
-        logger.info(f"Starting GPIO thread for line {self.name}.")
+        logger.info(f"Initializing job thread '{self.name}'")
 
         try:
             while self.__app_is_running():
                 # Wait for the thread's turn to proceed
                 self.__waiting()
 
-                # Toggle LED state
-                self._led_state = MAKE_IT_TRUE if not self._led_state else MAKE_IT_OFF
-                logger.debug(f"LED [{self.name}] State changed to: {self._led_state}")
+                # Core task execution block
+                self._active = not self._active
+                logger.debug(f"{self.name}] Task state update: {self._active}")
 
-                # Wait for the State timeout
-                time.sleep(STATE_CHANGE_DELAY)
+                # Stop the thread for a while before changing its state
+                # time.sleep(STATE_CHANGE_DELAY)
 
                 # Release the wait flag and notify other threads
                 self.__release_wait_flag()
 
-            # Turn off LED before exiting
-            logger.info(f"GPIO thread for line {self.name} finished.")
+                # Stop the thread for a while after changed its the State
+                time.sleep(STATE_CHANGE_DELAY)
+
+            logger.info(f"Job '{self.name}' completed successfully")
 
         except Exception as e:
-            logger.error(f"Error in thread: {e}", exc_info=True)
+            logger.error(f"Task failure in '{self.name}': {e}", exc_info=False)
 
 
 def handle_sigint(
@@ -296,13 +290,19 @@ if __name__ == "__main__":
         sigint_handler = partial(handle_sigint, app_control_flags, lock_flag)
         signal.signal(signal.SIGINT, sigint_handler)
 
-        for val in THREADS:
-            Job(
+        # Stores Job thread objects and later joins them.
+        # Its purpose is to track active threads.
+        threads = []
+
+        for i in range(THREADS_QTY):
+            t = Job(
                 control=app_control_flags,
                 lock=lock_flag,
                 condition=condition_flag,
-                output_number=val,
+                thread_name=str(uuid.uuid4().hex),
             )
+
+            threads.append(t)
 
         # Signalize the threads after they are all ready to start working
         time.sleep(1)
@@ -315,7 +315,21 @@ if __name__ == "__main__":
             pass
 
         logger.info("Releasing resources ...")
-        logger.info(f"Total: {app_control_flags.get_all_values()}")
+
+        # Wait for all threads to finish
+        for t in threads:
+            t.join()
+
+        # Fetch the results
+        data = app_control_flags.get_all_values()
+        # Convert the dictionary to a Pandas DataFrame
+        df = pd.DataFrame.from_dict(data, orient="index", columns=["Values"])
+        # Reset index to create a new column 'UUID' from the index
+        df.reset_index(inplace=True)
+        # Rename the 'index' column to 'UUID'
+        df.rename(columns={"index": "UUID"}, inplace=True)
+        # Log the DataFrame
+        logger.info(f"\n\n{df}\n")
 
     except Exception as e:
         logger.error(f"An error occurred: {e}", exc_info=True)
