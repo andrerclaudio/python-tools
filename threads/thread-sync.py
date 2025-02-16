@@ -17,12 +17,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-THREADS_QTY: int = 999
+THREADS_QTY: int = 97
 STATE_CHANGE_DELAY: float = 1.0
-
-# Value definitions
-ON = True
-OFF = False
 
 
 class AppControlFlags:
@@ -112,8 +108,7 @@ class AppControlFlags:
         Args:
             name (str): Name of the operation to update.
         """
-        if name in self._WORK_COUNTER:
-            self._WORK_COUNTER[name] += 1
+        self._WORK_COUNTER[name] = self._WORK_COUNTER.setdefault(name, 0) + 1
 
     def min_counter(self) -> str:
         """
@@ -142,7 +137,7 @@ class AppControlFlags:
         Returns:
             dict: Mapping from operation names to their respective counter values.
         """
-        return self._WORK_COUNTER.copy()
+        return dict(self._WORK_COUNTER)
 
 
 class Job(threading.Thread):
@@ -179,7 +174,7 @@ class Job(threading.Thread):
 
         self._control: AppControlFlags = control
         self._condition: threading.Condition = condition
-        self._active: bool = OFF  # Initial activity state
+        self._active: bool = False  # Initial activity state
 
         self._control.add_counter(name=self.name)
         self.start()
@@ -302,8 +297,8 @@ if __name__ == "__main__":
         app_control_flags = AppControlFlags()
 
         # Define a lock for synchronization
-        lock_flag: threading.Lock = threading.Lock()
-        condition_flag: threading.Condition = threading.Condition(lock=lock_flag)
+        lock: threading.Lock = threading.Lock()
+        condition_flag: threading.Condition = threading.Condition(lock=lock)
 
         # Create a partial function to handle SIGINT with control_flags and condition_flag
         sigint_handler = partial(handle_sigint, app_control_flags, condition_flag)
@@ -321,10 +316,10 @@ if __name__ == "__main__":
             )
             threads.append(t)
 
-        # Make sure all Threads have started
-        while len(threads) < THREADS_QTY:
-            # Do nothing
-            pass
+        # Wait until all threads are fully started before proceeding
+        for t in threads:
+            while not t.is_alive():
+                time.sleep(0.01)  # Small sleep to avoid busy-waiting
 
         # Signalize the threads they are ready to start working
         with condition_flag:
