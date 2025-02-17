@@ -5,10 +5,11 @@ import signal
 import sys
 import threading
 import time
+import uuid
 from functools import partial
 from typing import Dict
+
 import pandas as pd
-import uuid
 
 # Initialize logger configuration
 logging.basicConfig(
@@ -48,11 +49,6 @@ class AppControlFlags:
 
         get_all_values() -> Dict[str, int]:
             Returns a dictionary containing all tracked operation counters for program-wide analysis or reporting.
-
-        values_balanced() -> bool:
-            Checks if all tracked operation counts in the __WORK_COUNTER dictionary are equal and greater than zero.
-            Returns:
-                bool: True if all values are the same and greater than zero, False otherwise.
     """
 
     def __init__(self) -> None:
@@ -119,16 +115,6 @@ class AppControlFlags:
             str: Name of the operation with the minimal count.
         """
         return min(self._WORK_COUNTER.keys(), key=lambda k: self._WORK_COUNTER[k])
-
-    def values_balanced(self) -> bool:
-        """
-        Check if all values in the __WORK_COUNTER dictionary are equal and greater than zero.
-
-        Returns:
-            bool: True if all values are the same and greater than zero, False otherwise.
-        """
-        values = set(self._WORK_COUNTER.values())
-        return len(values) == 1 and next(iter(values)) > 0
 
     def get_all_values(self) -> Dict[str, int]:
         """
@@ -228,12 +214,6 @@ class Job(threading.Thread):
         logger.debug(
             f"[{self.name}] Toggled {self._control.get_counter(self.name)} times."
         )
-
-    def __jobs_balanced(self) -> bool:
-        """Checks if jobs are balanced using 'self._control.values_balanced()',
-        ensuring thread safety with 'self._condition'."""
-        with self._condition:
-            return self._control.values_balanced()
 
     def run(self) -> None:
         """
